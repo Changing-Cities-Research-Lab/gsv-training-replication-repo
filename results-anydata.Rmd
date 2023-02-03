@@ -1,0 +1,151 @@
+---
+title: "Results"
+author: "XXX"
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r summary}
+# Script Description ------------------------------------------------------
+
+# Use this script to generate similar reliability results for any input data user provides.
+# Input data should be formatted as the pairs.csv and single_image.csv in the repository.
+
+# Inputs:
+# Pairwise data - pairs.csv
+# Single Image dataset - single_image.csv
+
+```
+
+
+```{r packages}
+
+# Libraries and Directories
+rm(list=ls())
+library("gtools")
+library("tidyverse")
+library("readr")
+library("irr") #for agreement, reliability
+
+#SET WORKING DIRECTORY HERE
+
+```
+
+# Load Data
+```{r data}
+single_image <- read_csv("single_image.csv")
+
+pairs <- read_csv("pairs.csv")
+
+```
+
+# Output
+
+## Number of Unique Images Coded by MTurkers
+
+```{r images-mturkers}
+single_results <- single_image %>% 
+  filter(!is.na(single_mturk_rating1)) %>% 
+  group_by(city) %>% 
+  summarize(
+    single_image_coders = mean(unique_mturkers,na.rm=TRUE),
+    single_images_coded = n_distinct(image_name)
+  )
+
+pairs_results <- pairs %>% 
+  filter(!is.na(pairs_mturk_choice1)) %>% 
+  mutate(ID = group_indices(.,image_name1,image_name2)) %>% 
+  group_by(city) %>% 
+  summarize(
+    pairs_coders = mean(unique_mturkers,na.rm=TRUE),
+    pairs_coded = n_distinct(ID)
+  ) %>% 
+  dplyr::select(-city)
+
+cbind(single_results,pairs_results)
+
+rm(single_results,pairs_results)
+```
+
+## Distribution of Trash in Training Data
+
+```{r training-data}
+
+single_image %>% 
+  filter(training==1) %>% 
+  group_by(city,trueskill_rating) %>% 
+  summarize(n = n()) %>% 
+  mutate(percent = n/sum(n)*100)
+
+
+```
+
+## Distribution of ML Predictions of Trash
+```{r ml-distributions}
+single_image %>% 
+  filter(!is.na(pred_svm) & time_series==1) %>% 
+  mutate(year = sub("^.*_+(.*)+_.*_.*$", "\\1", image_name)) %>% 
+  group_by(city,year) %>% 
+  summarize(pred_0 = sum(pred_svm==0, na.rm = T), pred_1 = sum(pred_svm==1, na.rm = T), total = n()) %>% 
+  mutate(perc = pred_1/total)
+
+```
+
+## Pair Comparisons Reliability
+```{r pairwise-reliability-betweenraters}
+
+#For example - 2 raters
+agree(pairs[(pairs$n_raters==2), c(2:3)]) 
+icc(pairs[(pairs$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(pairs[(pairs$n_raters==2), c(2:3)])), "ordinal")
+
+```
+
+## Single Image Reliability 
+```{r single-reliability-betweenraters}
+
+#Create dataframe where at least one single image rating exists
+single_image_cs <- single_image %>% 
+  filter_at(vars(starts_with("single_cs_rating")),any_vars(!is.na(.)))
+
+#For example - 2 raters
+agree(single_image_cs[(single_image_cs$n_raters==2), c(2:3)]) 
+icc(single_image_cs[(single_image_cs$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(single_image_cs[(single_image_cs$n_raters==2), c(2:3)])), "ordinal")
+
+
+```
+
+## Reliability Between Raters and Predictions 
+```{r single-reliability-betweenraters}
+
+#Create dataframe where at least one single image rating exists and create binary version of rating
+#Look only at those that all agree in coding sessions
+single_image_cs <- single_image %>% 
+  filter_at(vars(starts_with("single_cs_rating")),any_vars(!is.na(.))) %>% 
+  mutate_at(vars(starts_with("single_cs_rating")), 
+            funs(case_when(
+              . %in% c(0,1) ~ 0,
+              . %in% c(2,3,4) ~ 1
+            ))
+           ) %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
+  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="Boston") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+
+#For example - 2 raters
+agree(single_image_cs[(single_image_cs$n_raters==2), c(2:3,9)]) 
+icc(single_image_cs[(single_image_cs$n_raters==2), c(2:3,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(single_image_cs[(single_image_cs$n_raters==2), c(2:3,9)])), "ordinal")
+
+```
+

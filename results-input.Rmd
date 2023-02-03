@@ -1,0 +1,763 @@
+---
+title: "Results"
+author: "XXX"
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r summary}
+# Script Description ------------------------------------------------------
+
+# Use this script to generate the tables that are in the training data paper.
+
+# Inputs:
+# Pairwise data - pairs.csv
+# Single Image dataset - single_image.csv
+
+```
+
+
+```{r packages}
+
+# Libraries and Directories
+rm(list=ls())
+library("gtools")
+library("tidyverse")
+library("readr")
+library("irr") #for agreement, reliability
+
+#SET WORKING DIRECTORY HERE
+
+```
+
+# Load Data and Set Appropriate Column Types
+```{r data}
+single_image <- read_csv("single_image.csv",
+                  col_types = list(
+                  pred_svm = col_double(),
+                  single_cs_rating5 = col_double(),
+                  single_cs_rating6 = col_double()
+                  )
+                  ) 
+
+pairs <- read_csv("pairs.csv",
+                  col_types = list(
+                  pairs_cs_choice2 = col_double(),
+                  pairs_cs_choice3 = col_double(),
+                  pairs_cs_choice4 = col_double(),
+                  pairs_mturk_choice2 = col_double(),
+                  pairs_mturk_choice3 = col_double(),
+                  pairs_mturk_choice4 = col_double()
+                  )
+)
+
+```
+
+# Tables
+
+## Table 1: Number of Unique Images Coded by MTurkers
+
+```{r images-mturkers}
+single_results <- single_image %>% 
+  filter(!is.na(single_mturk_rating1)) %>% # Keep only those that have at least 1 MTurk rating
+  group_by(city) %>% 
+  summarize(
+    single_image_coders = mean(unique_mturkers,na.rm=TRUE),
+    single_images_coded = n_distinct(image_name)
+  )
+
+pairs_results <- pairs %>% 
+  filter(!is.na(pairs_mturk_choice1)) %>% 
+  mutate(ID = group_indices(.,image_name1,image_name2)) %>% 
+  group_by(city) %>% 
+  filter(!grepl("_MA_",image_name1)) %>% #remove earlier pairwise Boston results, irrelevant for analysis here.
+  summarize(
+    pairs_coders = mean(unique_mturkers,na.rm=TRUE),
+    pairs_coded = n_distinct(ID)
+  ) %>% 
+  dplyr::select(-city)
+
+cbind(single_results,pairs_results)
+
+rm(single_results,pairs_results)
+```
+
+## Table 2 : Distribution of Trash in Training Data
+
+```{r training-data}
+
+single_image %>% 
+  filter(training==1) %>% # Keep only those in the training set
+  group_by(image_name) %>% 
+  slice(1) %>% 
+  group_by(city,trueskill_rating) %>% 
+  summarize(n = n()) %>% 
+  mutate(percent = n/sum(n)*100)
+
+
+```
+
+## Table 3 : Distribution of ML Predictions of Trash
+```{r ml-distributions}
+single_image %>% 
+  filter(!is.na(pred_svm) & time_series==1) %>% # Keep time series images with predictions
+  mutate(year = sub("^.*_+(.*)+_.*_.*$", "\\1", image_name)) %>% # Year is embedded in image name
+  group_by(city,year) %>% 
+  summarize(pred_0 = sum(pred_svm==0, na.rm = T), pred_1 = sum(pred_svm==1, na.rm = T), total = n()) %>% 
+  mutate(perc = pred_1/total)
+
+```
+
+## Table 4 : Counts of Images from Coding Sessions
+```{r images-coders}
+single_results <- single_image %>% 
+  filter(!is.na(single_cs_rating1)) %>% 
+  group_by(city) %>% 
+  summarize(
+    single_image_coders = mean(unique_coders,na.rm=TRUE),
+    single_images_coded = n_distinct(image_name)
+  )
+
+pairs_results <- pairs %>% 
+  filter(!is.na(pairs_cs_choice1)) %>% 
+  mutate(ID = group_indices(.,image_name1,image_name2)) %>% 
+  group_by(city) %>% 
+  summarize(
+    pairs_coders = mean(unique_coders,na.rm=TRUE),
+    pairs_coded = n_distinct(ID)
+  ) %>% 
+  dplyr::select(-city)
+
+cbind(single_results,pairs_results)
+
+rm(single_results,pairs_results)
+```
+
+## Table 5 : Pair Comparisons Reliability Panel 1
+```{r pairwise-reliability-betweenraters}
+#Create separate dataframes for each city
+bos <- pairs %>% 
+  dplyr::select(city,starts_with("pairs_cs_choice")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
+  filter(n_raters > 1 & city=="Boston") 
+
+det <- pairs %>% 
+  dplyr::select(city,starts_with("pairs_cs_choice")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
+  filter(n_raters > 1 & city=="Detroit") 
+
+la <- pairs %>% 
+  dplyr::select(city,starts_with("pairs_cs_choice")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
+  filter(n_raters > 1 & city=="LA") 
+
+#Boston - only two raters in Boston
+agree(bos[(bos$n_raters==2), c(2:3)]) 
+icc(bos[(bos$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3)])), "ordinal")
+
+#Detroit
+#Two raters
+agree(det[(det$n_raters==2), c(2:3)]) 
+icc(det[(det$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3)])), "ordinal")
+#Three raters
+agree(det[(det$n_raters==3), c(2:4)]) 
+icc(det[(det$n_raters==3), c(2:4)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4)])), "ordinal")
+
+#LA
+agree(la[(la$n_raters==2), c(2:3)]) 
+icc(la[(la$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3)])), "ordinal")
+#Three raters
+agree(la[(la$n_raters==3), c(2:4)]) 
+icc(la[(la$n_raters==3), c(2:4)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4)])), "ordinal")
+
+rm(bos,det,la) #Clean up environment
+```
+
+### Pair Comparisons Reliability Panel 2
+
+```{r pairwise-reliability-betweenratersandmturk}
+#Look only at those that all agree in coding sessions
+
+# Boston
+bos <- pairs %>% 
+  dplyr::select(city,starts_with("pairs_cs_choice"),starts_with("pairs_mturk_choice")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("pairs_cs_choice"))))) %>% 
+  mutate(var = var(c_across(starts_with("pairs_cs_choice")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(pairs_cs_choice1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="Boston")
+
+#n=1
+agree(bos[(bos$n_raters==1), c(2,6)]) 
+icc(bos[(bos$n_raters==1), c(2,6)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==1), c(2,6)])), "ordinal")
+#n=2
+agree(bos[(bos$n_raters==2), c(2:3,6)]) 
+icc(bos[(bos$n_raters==2), c(2:3,6)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3,6)])), "ordinal")
+
+#Detroit
+det <- pairs %>% 
+  dplyr::select(city,starts_with("pairs_cs_choice"),starts_with("pairs_mturk_choice")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("pairs_cs_choice"))))) %>% 
+  mutate(var = var(c_across(starts_with("pairs_cs_choice")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(pairs_cs_choice1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="Detroit")
+#Overall
+agree(det[, c(2,6)]) 
+#n=1
+agree(det[(det$n_raters==1), c(2,6)]) 
+icc(det[(det$n_raters==1), c(2,6)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==1), c(2,6)])), "ordinal")
+#n=2
+agree(det[(det$n_raters==2), c(2:3,6)]) 
+icc(det[(det$n_raters==2), c(2:3,6)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3,6)])), "ordinal")
+
+#LA
+la <- pairs %>% 
+  dplyr::select(city,starts_with("pairs_cs_choice"),starts_with("pairs_mturk_choice")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("pairs_cs_choice"))))) %>% 
+  mutate(var = var(c_across(starts_with("pairs_cs_choice")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(pairs_cs_choice1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="LA")
+
+#Overall
+agree(la[, c(2,6)]) 
+#n=1
+agree(la[(la$n_raters==1), c(2,6)]) 
+icc(la[(la$n_raters==1), c(2,6)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==1), c(2,6)])), "ordinal")
+#n=2
+agree(la[(la$n_raters==2), c(2:3,6)]) 
+icc(la[(la$n_raters==2), c(2:3,6)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3,6)])), "ordinal")
+#n=3
+agree(la[(la$n_raters==3), c(2:4,6)]) 
+icc(la[(la$n_raters==3), c(2:4,6)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4,6)])), "ordinal")
+```
+
+## Table 6 : Single Image Reliability Panel 1
+```{r single-reliability-betweenraters}
+
+#Create dataframe where at least one single image rating exists
+single_image_cs <- single_image %>% 
+  filter_at(vars(starts_with("single_cs_rating")),any_vars(!is.na(.)))
+
+
+#Create separate dataframes for each city
+bos <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
+  filter(n_raters > 1 & city=="Boston") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+det <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
+  filter(n_raters > 1 & city=="Detroit") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+la <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
+  filter(n_raters > 1 & city=="LA") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+#Boston
+#Two Raters
+agree(bos[(bos$n_raters==2), c(2:3)]) 
+icc(bos[(bos$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3)])), "ordinal")
+#Three Raters
+agree(bos[(bos$n_raters==3), c(2:4)]) 
+icc(bos[(bos$n_raters==3), c(2:4)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==3), c(2:4)])), "ordinal")
+#Four Raters
+agree(bos[(bos$n_raters==4), c(2:5)]) 
+icc(bos[(bos$n_raters==4), c(2:5)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==4), c(2:5)])), "ordinal")
+
+
+#Detroit
+#Two raters
+agree(det[(det$n_raters==2), c(2:3)]) 
+icc(det[(det$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3)])), "ordinal")
+#Three raters
+agree(det[(det$n_raters==3), c(2:4)]) 
+icc(det[(det$n_raters==3), c(2:4)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4)])), "ordinal")
+#Four Raters
+agree(det[(det$n_raters==4), c(2:5)]) 
+icc(det[(det$n_raters==4), c(2:5)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==4), c(2:5)])), "ordinal")
+
+#LA
+agree(la[(la$n_raters==2), c(2:3)]) 
+icc(la[(la$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3)])), "ordinal")
+#Three raters
+agree(la[(la$n_raters==3), c(2:4)]) 
+icc(la[(la$n_raters==3), c(2:4)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4)])), "ordinal")
+#Four raters
+agree(la[(la$n_raters==4), c(2:5)]) 
+icc(la[(la$n_raters==4), c(2:5)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==4), c(2:5)])), "ordinal")
+
+rm(bos,det,la) #Clean up environment
+```
+
+# Single Image Reliability Panel 2
+
+```{r single-reliability-betweenratersandmturk}
+#Look only at those that all agree in coding sessions
+
+# Boston
+bos <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating"),trueskill_rating) %>% 
+  filter(!is.na(trueskill_rating)) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
+  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="Boston") 
+
+#Two raters
+agree(bos[(bos$n_raters==2), c(2:3,9)]) 
+icc(bos[(bos$n_raters==2), c(2:3,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3,9)])), "ordinal")
+
+#Three raters
+agree(bos[(bos$n_raters==3), c(2:4,9)]) 
+icc(bos[(bos$n_raters==3), c(2:4,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==3), c(2:4,9)])), "ordinal")
+
+#Four raters
+agree(bos[(bos$n_raters==4), c(2:5,9)]) 
+icc(bos[(bos$n_raters==4), c(2:5,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==4), c(2:5,9)])), "ordinal")
+
+#Detroit
+det <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating"),trueskill_rating) %>% 
+  filter(!is.na(trueskill_rating)) %>%  
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
+  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="Detroit")
+
+#Two raters
+agree(det[(det$n_raters==2), c(2:3,9)]) 
+icc(det[(det$n_raters==2), c(2:3,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3,9)])), "ordinal")
+
+#Three raters
+agree(det[(det$n_raters==3), c(2:4,9)]) 
+icc(det[(det$n_raters==3), c(2:4,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4,9)])), "ordinal")
+
+#Four raters
+agree(det[(det$n_raters==4), c(2:5,9)]) 
+icc(det[(det$n_raters==4), c(2:5,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==4), c(2:5,9)])), "ordinal")
+
+#LA
+la <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating"),trueskill_rating) %>% 
+  filter(!is.na(trueskill_rating)) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
+  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="LA")
+
+#Two raters
+agree(la[(la$n_raters==2), c(2:3,9)]) 
+icc(la[(la$n_raters==2), c(2:3,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3,9)])), "ordinal")
+
+#Three raters
+agree(la[(la$n_raters==3), c(2:4,9)]) 
+icc(la[(la$n_raters==3), c(2:4,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4,9)])), "ordinal")
+
+#Four raters
+agree(la[(la$n_raters==4), c(2:5,9)]) 
+icc(la[(la$n_raters==4), c(2:5,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==4), c(2:5,9)])), "ordinal")
+```
+
+## Table 7 : Reliability Between Raters and Predictions Panel 1
+```{r single-reliability-betweenraters}
+
+#Create dataframe where at least one single image rating exists and create binary version of rating
+single_image_cs <- single_image %>% 
+  filter_at(vars(starts_with("single_cs_rating")),any_vars(!is.na(.))) %>% 
+  mutate_at(vars(starts_with("single_cs_rating")), 
+            funs(case_when(
+              . %in% c(0,1) ~ 0,
+              . %in% c(2,3,4) ~ 1
+            ))
+           )
+
+
+#Create separate dataframes for each city
+bos <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
+  filter(n_raters > 1 & city=="Boston") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+det <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
+  filter(n_raters > 1 & city=="Detroit") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+la <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating")) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
+  filter(n_raters > 1 & city=="LA") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+#Boston
+#Two Raters
+agree(bos[(bos$n_raters==2), c(2:3)]) 
+icc(bos[(bos$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3)])), "ordinal")
+#Three Raters
+agree(bos[(bos$n_raters==3), c(2:4)]) 
+icc(bos[(bos$n_raters==3), c(2:4)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==3), c(2:4)])), "ordinal")
+#Four Raters
+agree(bos[(bos$n_raters==4), c(2:5)]) 
+icc(bos[(bos$n_raters==4), c(2:5)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==4), c(2:5)])), "ordinal")
+
+
+#Detroit
+#Two raters
+agree(det[(det$n_raters==2), c(2:3)]) 
+icc(det[(det$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3)])), "ordinal")
+#Three raters
+agree(det[(det$n_raters==3), c(2:4)]) 
+icc(det[(det$n_raters==3), c(2:4)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4)])), "ordinal")
+#Four Raters
+agree(det[(det$n_raters==4), c(2:5)]) 
+icc(det[(det$n_raters==4), c(2:5)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==4), c(2:5)])), "ordinal")
+
+#LA
+agree(la[(la$n_raters==2), c(2:3)]) 
+icc(la[(la$n_raters==2), c(2:3)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3)])), "ordinal")
+#Three raters
+agree(la[(la$n_raters==3), c(2:4)]) 
+icc(la[(la$n_raters==3), c(2:4)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4)])), "ordinal")
+#Four raters
+agree(la[(la$n_raters==4), c(2:5)]) 
+icc(la[(la$n_raters==4), c(2:5)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==4), c(2:5)])), "ordinal")
+
+rm(bos,det,la) #Clean up environment
+```
+
+# Reliability Between Raters and Predictions Panel 2
+
+```{r single-reliability-betweenratersandmturk}
+#Look only at those that all agree in coding sessions
+
+# Boston
+bos <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating"),pred_svm) %>% 
+  filter(!is.na(pred_svm)) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
+  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="Boston") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+#Two raters
+agree(bos[(bos$n_raters==2), c(2:3,9)]) 
+icc(bos[(bos$n_raters==2), c(2:3,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3,9)])), "ordinal")
+
+#Three raters
+agree(bos[(bos$n_raters==3), c(2:4,9)]) 
+icc(bos[(bos$n_raters==3), c(2:4,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==3), c(2:4,9)])), "ordinal")
+
+#Four raters
+agree(bos[(bos$n_raters==4), c(2:5,9)]) 
+icc(bos[(bos$n_raters==4), c(2:5,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(bos[(bos$n_raters==4), c(2:5,9)])), "ordinal")
+
+#Detroit
+det <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating"),pred_svm) %>% 
+  filter(!is.na(pred_svm)) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
+  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="Detroit") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+#Two raters
+agree(det[(det$n_raters==2), c(2:3,9)]) 
+icc(det[(det$n_raters==2), c(2:3,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3,9)])), "ordinal")
+
+#Three raters
+agree(det[(det$n_raters==3), c(2:4,9)]) 
+icc(det[(det$n_raters==3), c(2:4,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4,9)])), "ordinal")
+
+#Four raters
+agree(det[(det$n_raters==4), c(2:5,9)]) 
+icc(det[(det$n_raters==4), c(2:5,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(det[(det$n_raters==4), c(2:5,9)])), "ordinal")
+
+#LA
+la <- single_image_cs %>% 
+  dplyr::select(city,starts_with("single_cs_rating"),pred_svm) %>% 
+  filter(!is.na(pred_svm)) %>% 
+  rowwise() %>% 
+  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
+  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
+  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  filter(city=="LA") %>% 
+  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+
+#Two raters
+agree(la[(la$n_raters==2), c(2:3,9)]) 
+icc(la[(la$n_raters==2), c(2:3,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3,9)])), "ordinal")
+
+#Three raters
+agree(la[(la$n_raters==3), c(2:4,9)]) 
+icc(la[(la$n_raters==3), c(2:4,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4,9)])), "ordinal")
+
+#Four raters
+agree(la[(la$n_raters==4), c(2:5,9)]) 
+icc(la[(la$n_raters==4), c(2:5,9)], model = "twoway") 
+kripp.alpha(t(as.matrix(la[(la$n_raters==4), c(2:5,9)])), "ordinal")
+```
+
+## Trueskill v. Coding Session Figure
+```{r fig-3}
+
+trueskill_agg <- single_image %>% 
+  filter(!is.na(trueskill_rating)) %>% 
+  group_by(city,trueskill_rating) %>% 
+  summarize(count = n()) %>% 
+  mutate(perc = (count/sum(count))) %>% 
+  mutate(type = "Trueskill") %>% 
+  rename(rating = trueskill_rating)
+
+
+cs_agg <- single_image %>% 
+  dplyr::select(image_name,city,starts_with("single_cs_rating")) %>% 
+  filter(!is.na(single_cs_rating1)) %>% 
+  pivot_longer(
+    cols = starts_with("single_cs_rating"),
+    values_to = "rating"
+  ) %>% 
+  filter(!is.na(rating) & !rating==0) %>% 
+  group_by(city,rating) %>% 
+  summarize(count = n()) %>% 
+  mutate(perc = (count/sum(count))) %>% 
+  mutate(type = "Coding Session") 
+
+agg <- rbind(cs_agg,trueskill_agg)
+
+agg_overall <- agg %>% 
+  group_by(type,rating) %>% 
+  summarize(count = sum(count)) %>% 
+  mutate(perc = (count/sum(count)))
+
+#Plot each panel
+#Overall
+agg_overall_plot <-
+ggplot(agg_overall, aes(x=rating, y=perc,fill=type)) +
+  geom_bar(position = "dodge", stat="identity") +
+  geom_text(aes(label=count), position=position_dodge(width=0.9), vjust=-0.25) +
+  scale_y_continuous(labels = scales::percent) + 
+  coord_cartesian(ylim=c(0,0.80)) + 
+  labs(title = "All Cities", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("gray40", "gray70"))
+
+#Boston
+agg_bos_plot <-
+  agg %>% 
+  filter(city == "Boston") %>% 
+  ggplot(aes(x=rating, y=perc,fill=type)) +
+  geom_bar(position = "dodge", stat="identity") +
+  geom_text(aes(label=count), position=position_dodge(width=0.9), vjust=-0.25) +
+  scale_y_continuous(labels = scales::percent) + 
+  coord_cartesian(ylim=c(0,0.80)) + 
+  labs(title = "Boston", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("gray40", "gray70"))
+
+#Detroit
+agg_det_plot <-
+  agg %>% 
+  filter(city == "Detroit") %>% 
+  ggplot(aes(x=rating, y=perc,fill=type)) +
+  geom_bar(position = "dodge", stat="identity") +
+  geom_text(aes(label=count), position=position_dodge(width=0.9), vjust=-0.25) +
+  scale_y_continuous(labels = scales::percent) + 
+  coord_cartesian(ylim=c(0,0.80)) + 
+  labs(title = "Detroit", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("gray40", "gray70"))
+
+#LA
+agg_la_plot <-
+  agg %>% 
+  filter(city == "LA") %>% 
+  ggplot(aes(x=rating, y=perc,fill=type)) +
+  geom_bar(position = "dodge", stat="identity") +
+  geom_text(aes(label=count), position=position_dodge(width=0.9), vjust=-0.25) +
+  scale_y_continuous(labels = scales::percent) + 
+  coord_cartesian(ylim=c(0,0.80)) + 
+  labs(title = "Los Angeles", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("gray40", "gray70"))
+
+#Bind
+fig <- ggpubr::ggarrange(agg_overall_plot, agg_bos_plot, agg_det_plot, agg_la_plot,
+                                        ncol = 2, nrow = 2,
+                    common.legend = TRUE,
+                    legend = "bottom")
+
+
+
+
+```
+
+## Coding Session v. Predictions Figure
+
+```{r fig-6}
+
+cs_agg_binary <- single_image %>% 
+  dplyr::select(image_name,city,starts_with("single_cs_rating")) %>% 
+  filter(!is.na(single_cs_rating1)) %>% 
+  pivot_longer(
+    cols = starts_with("single_cs_rating"),
+    values_to = "rating"
+  ) %>% 
+  filter(!is.na(rating) & !rating==0) %>% 
+  mutate(rating = ifelse(rating > 1, 1, 0)) %>% 
+  group_by(city,rating) %>% 
+  summarize(count = n()) %>% 
+  mutate(perc = (count/sum(count))) %>% 
+  mutate(type = "Coding Session") %>% 
+  mutate(rating = factor(rating,
+                         labels = c("No Trash", "Trash")))
+
+preds_agg <- single_image %>% 
+  filter(!is.na(pred_svm) & pred_svm!=-1) %>% 
+  group_by(city,pred_svm) %>% 
+  summarize(count = n()) %>% 
+  mutate(perc = (count/sum(count))) %>% 
+  mutate(type = "ML") %>% 
+  rename(rating = pred_svm) %>% 
+  mutate(rating = factor(rating,
+                         labels = c("No Trash", "Trash")))
+
+agg <- rbind(preds_agg,cs_agg_binary)
+
+agg_overall <- agg %>% 
+  group_by(type,rating) %>% 
+  summarize(count = sum(count)) %>% 
+  mutate(perc = (count/sum(count)))
+
+#Plot each panel
+#Overall
+agg_overall_plot <-
+ggplot(agg_overall, aes(x=rating, y=perc,fill=type,group=-perc)) +
+  geom_bar(position = "stack", stat="identity") +
+  scale_y_continuous(labels = scales::percent) + 
+  coord_cartesian(ylim=c(0,0.80)) + 
+  labs(title = "All Cities", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("gray40", "gray70"))
+
+#Boston
+agg_bos_plot <-
+  agg %>% 
+  filter(city == "Boston") %>% 
+  ggplot(aes(x=rating, y=perc,fill=type,group=-perc)) +
+  geom_bar(position = "stack", stat="identity") +
+  scale_y_continuous(labels = scales::percent) + 
+  coord_cartesian(ylim=c(0,0.80)) + 
+  labs(title = "Boston", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("gray40", "gray70"))
+
+#Detroit
+agg_det_plot <-
+  agg %>% 
+  filter(city == "Detroit") %>% 
+  ggplot(aes(x=rating, y=perc,fill=type,group=-perc)) +
+  geom_bar(position = "stack", stat="identity") +
+  scale_y_continuous(labels = scales::percent) + 
+  coord_cartesian(ylim=c(0,0.80)) + 
+  labs(title = "Detroit", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("gray40", "gray70"))
+
+#LA
+agg_la_plot <-
+  agg %>% 
+  filter(city == "LA") %>% 
+  ggplot(aes(x=rating, y=perc,fill=type,group=-perc)) +
+  geom_bar(position = "stack", stat="identity") +
+  scale_y_continuous(labels = scales::percent) + 
+  coord_cartesian(ylim=c(0,0.80)) + 
+  labs(title = "Los Angeles", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("gray40", "gray70"))
+
+#Bind
+fig <- ggpubr::ggarrange(agg_overall_plot, agg_bos_plot, agg_det_plot, agg_la_plot,
+                                        ncol = 2, nrow = 2,
+                    common.legend = TRUE,
+                    legend = "bottom")
+
+
+```
