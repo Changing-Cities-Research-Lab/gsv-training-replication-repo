@@ -1,10 +1,10 @@
 # GSV Training Data Replication Repository README
 
-This document summarizes the included datasets (uploaded to SDR) and code (located here in Github) to replicate and reproduce tables in Hwang et al.'s (2023) paper "Curating Training Data for Reliable Large-Scale Visual Data Analysis: Lessons from Identifying Trash in Street View Imagery". 
+This document summarizes the included datasets (uploaded to [Stanford Digital Repository](https://doi.org/10.25740/xq145bk1280)) and code (located in this repository) to replicate and reproduce tables in Hwang et al.'s (2023) paper "Curating Training Data for Reliable Large-Scale Visual Data Analysis: Lessons from Identifying Trash in Street View Imagery". These materials are intended for users to adapt a similar pipeline to other outcomes or data from other places or utilize our data for other research.
 
 ## Data
 
-Data are stored in Stanford Digital Repository at [INPUT LINK].
+Data are stored in Stanford Digital Repository [here](https://doi.org/10.25740/xq145bk1280).
 
 **single_image.csv**: This dataset includes all of the images that have single image ratings from Mechanical Turk or coding sessions and all images with Trueskill ratings or ML predictions. Each row corresponds to an image, with columns indicating the answer provided in each of these surveys and/or the relevant Trueskill rating and ML prediction. 
 
