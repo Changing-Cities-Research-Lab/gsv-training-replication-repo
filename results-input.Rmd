@@ -702,7 +702,8 @@ cs_agg_binary <- single_image %>%
   mutate(perc = (count/sum(count))) %>% 
   mutate(type = "Coding Session") %>% 
   mutate(rating = factor(rating,
-                         labels = c("No Trash", "Trash")))
+                         labels = c("No Trash", "Trash"))) %>% 
+  mutate(rating = relevel(rating, ref = "No Trash"))
 
 preds_agg <- single_image %>% 
   filter(!is.na(pred_svm) & pred_svm!=-1) %>% 
@@ -712,7 +713,8 @@ preds_agg <- single_image %>%
   mutate(type = "ML") %>% 
   rename(rating = pred_svm) %>% 
   mutate(rating = factor(rating,
-                         labels = c("No Trash", "Trash")))
+                         labels = c("No Trash", "Trash"))) %>% 
+  mutate(rating = relevel(rating, ref = "No Trash"))
 
 agg <- rbind(preds_agg,cs_agg_binary)
 
@@ -724,10 +726,9 @@ agg_overall <- agg %>%
 #Plot each panel
 #Overall
 agg_overall_plot <-
-ggplot(agg_overall, aes(x=type, y=perc,fill=rating,group=-perc)) +
+ggplot(agg_overall, aes(x=type, y=perc,fill=rating)) +
   geom_bar(position = "stack", stat="identity") +
   scale_y_continuous(labels = scales::percent) + 
-  coord_cartesian(ylim=c(0,0.80)) + 
   labs(title = "All Cities", y = "Percent", x="Rating Source", fill = "Rating") +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5)) +
@@ -737,10 +738,9 @@ ggplot(agg_overall, aes(x=type, y=perc,fill=rating,group=-perc)) +
 agg_bos_plot <-
   agg %>% 
   filter(city == "Boston") %>% 
-  ggplot(aes(x=type, y=perc,fill=rating,group=-perc)) +
+  ggplot(aes(x=type, y=perc,fill=rating)) +
   geom_bar(position = "stack", stat="identity") +
   scale_y_continuous(labels = scales::percent) + 
-  coord_cartesian(ylim=c(0,0.80)) + 
   labs(title = "Boston", y = "Percent", x="Rating Source", fill = "Rating") +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5)) +
@@ -750,10 +750,9 @@ agg_bos_plot <-
 agg_det_plot <-
   agg %>% 
   filter(city == "Detroit") %>% 
-   ggplot(aes(x=type, y=perc,fill=rating,group=-perc)) +
+   ggplot(aes(x=type, y=perc,fill=rating)) +
   geom_bar(position = "stack", stat="identity") +
   scale_y_continuous(labels = scales::percent) + 
-  coord_cartesian(ylim=c(0,0.80)) + 
   labs(title = "Detroit", y = "Percent", x="Rating Source", fill = "Rating") +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5)) +
@@ -763,10 +762,9 @@ agg_det_plot <-
 agg_la_plot <-
   agg %>% 
   filter(city == "LA") %>% 
-  ggplot(aes(x=type, y=perc,fill=rating,group=-perc)) +
+  ggplot(aes(x=type, y=perc,fill=rating)) +
   geom_bar(position = "stack", stat="identity") +
   scale_y_continuous(labels = scales::percent) + 
-  coord_cartesian(ylim=c(0,0.80)) + 
   labs(title = "Los Angeles", y = "Percent", x="Rating Source", fill = "Rating") +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5)) +
