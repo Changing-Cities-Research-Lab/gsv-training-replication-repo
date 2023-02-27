@@ -51,24 +51,25 @@ pairs <- read_csv("pairs.csv")
 
 ```{r images-mturkers}
 single_results <- single_image %>% 
-  filter(!is.na(single_mturk_rating1)) %>% 
+  filter(!is.na(single_mturk_rating1)) %>% # Keep only those that have at least 1 MTurk rating
   group_by(city) %>% 
   summarize(
-    single_image_coders = mean(unique_mturkers,na.rm=TRUE),
-    single_images_coded = n_distinct(image_name)
+    single_image_coders = mean(unique_mturkers,na.rm=TRUE), # Calculate the number of unique MTurk coders 
+    single_images_coded = n_distinct(image_name) # Calculate the number of unique images coded
   )
 
 pairs_results <- pairs %>% 
-  filter(!is.na(pairs_mturk_choice1)) %>% 
-  mutate(ID = group_indices(.,image_name1,image_name2)) %>% 
+  filter(!is.na(pairs_mturk_choice1)) %>% # Keep only those that have at least 1 MTurk rating
+  mutate(ID = group_indices(.,image_name1,image_name2)) %>% # Create group idetnifier for each pair - based on image 1 and image 2
   group_by(city) %>% 
+  filter(!grepl("_MA_",image_name1)) %>% #remove earlier pairwise Boston results, irrelevant for analysis here.
   summarize(
-    pairs_coders = mean(unique_mturkers,na.rm=TRUE),
-    pairs_coded = n_distinct(ID)
+    pairs_coders = mean(unique_mturkers,na.rm=TRUE), # Calculate the number of unique MTurk coders 
+    pairs_coded = n_distinct(ID)  # Calculate the number of unique images coded
   ) %>% 
   dplyr::select(-city)
 
-cbind(single_results,pairs_results)
+cbind(single_results,pairs_results) # Put together for table
 
 rm(single_results,pairs_results)
 ```
@@ -78,21 +79,20 @@ rm(single_results,pairs_results)
 ```{r training-data}
 
 single_image %>% 
-  filter(training==1) %>% 
-  group_by(city,trueskill_rating) %>% 
-  summarize(n = n()) %>% 
-  mutate(percent = n/sum(n)*100)
+  filter(training==1) %>% # Keep only those in the training set
+  group_by(city,trueskill_rating) %>% # Group by city and each category
+  summarize(n = n()) %>% # Count by category/city
+  mutate(percent = n/sum(n)*100) # Calculate percentage in each category
 
 
 ```
 
 ## Distribution of ML Predictions of Trash
 ```{r ml-distributions}
-single_image %>% 
-  filter(!is.na(pred_svm) & time_series==1) %>% 
-  mutate(year = sub("^.*_+(.*)+_.*_.*$", "\\1", image_name)) %>% 
-  group_by(city,year) %>% 
-  summarize(pred_0 = sum(pred_svm==0, na.rm = T), pred_1 = sum(pred_svm==1, na.rm = T), total = n()) %>% 
+single_image %>%
+  filter(!is.na(pred_svm)) %>% 
+  group_by(city) %>%
+  summarize(pred_0 = sum(pred_svm==0, na.rm = T), pred_1 = sum(pred_svm==1, na.rm = T), total = n()) %>%
   mutate(perc = pred_1/total)
 
 ```
