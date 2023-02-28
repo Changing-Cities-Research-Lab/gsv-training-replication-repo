@@ -514,9 +514,9 @@ single_image_cs <- single_image %>%
   filter_at(vars(starts_with("single_cs_rating")),any_vars(!is.na(.))) %>% # Keep only those that have at least one coding session rating
   mutate(across(starts_with("single_cs_rating"), # Make coding session results binary
                 ~ case_when(
-                    . %in% c(0,1) ~ 0, # If a coder rated something as no trash or too obstructed - similar to prediction of 0
+                    . %in% c(1) ~ 0, # If a coder rated something as no trash - similar to prediction of 0
                     . %in% c(2,3,4) ~ 1, # Any level of trash - similar to prediction of 1
-                    TRUE ~ NA_real_
+                    TRUE ~ NA_real_ # Otherwise (rater marked as too obstructed) - this should be NA
                   )
                ))
 
