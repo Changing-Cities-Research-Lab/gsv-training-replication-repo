@@ -31,15 +31,22 @@ library("gtools")
 library("tidyverse")
 library("readr")
 library("irr") #for agreement, reliability
+library("foreach")
 
-#SET WORKING DIRECTORY HERE
+# Directories:
+homedir <- paste0(dirname(rstudioapi::getSourceEditorContext()$path))  # path to where script is located, in the main repository folder
+workdir <- "data/"  # data folder
+savedir <- paste0(homedir, workdir)
+
+# Import data:
+setwd(paste0(homedir, workdir))
+
+
 
 ```
 
 # Load Data and Set Appropriate Column Types
 ```{r data}
-
-setwd("/Users/nimadahir/Library/CloudStorage/GoogleDrive-ndahir@stanford.edu/.shortcut-targets-by-id/0B3mRackNzIMhYVAweUc2ZmxFVk0/PROJECT FOLDER: GSV/background and drafts/Drafts/reliability/replication-data")
 
 single_image <- read_csv("single_image.csv",
                          guess_max = 1000000) # read_csv will use the first 1,000 rows to guess type, but since this is missing for a lot of columns, they are incorrectly called in as logical. So, we want to maximize the number of guesses. This will slow down read_csv, but necessary for import.
@@ -131,614 +138,489 @@ rm(single_results,pairs_results)
 
 ## Table 5 : Pair Comparisons Reliability Panel 1
 ```{r pairwise-reliability-betweenraters}
-# Data----
-#Create separate dataframes for each city
-bos <- pairs %>% 
-  dplyr::select(city,starts_with("pairs_cs_choice")) %>% # Keep only the coding sessions results here
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% # Sum across all numeric columns to get the number of columns
-  filter(n_raters > 1 & city=="Boston") # For reliability measures, we want only those that have more than 1 rater.
+cities <- c("Boston", "Detroit", "LA")
 
-det <- pairs %>% 
-  dplyr::select(city,starts_with("pairs_cs_choice")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
-  filter(n_raters > 1 & city=="Detroit") 
+pairs_cities <- 
+  foreach (i = 1:length(cities)) %do% {
+    pairs %>% 
+      filter(city %in% cities[i]) %>% # subset to each each city
+      select(city, which(grepl("pairs_cs_choice", names(pairs)))) %>% #subset to coding session ratings
+      filter_at(vars(pairs_cs_choice1:pairs_cs_choice4), any_vars(!is.na(.))) %>% # remove if no ratings
+      rowwise() %>%
+      mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% # number of raters per pair
+      filter(n_raters > 1) # only keep pairs rated by 2+ people
+  }
+names(pairs_cities) <- cities
 
-la <- pairs %>% 
-  dplyr::select(city,starts_with("pairs_cs_choice")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
-  filter(n_raters > 1 & city=="LA") 
+# for each city, calculate % agreement, intraclass correlation, and krippendorf's alpha  
+table5_1 <- 
+  foreach (i = 1:length(pairs_cities),
+           .combine = rbind.data.frame) %do% {
+             foreach (j = 1:length(unique(pairs_cities[[i]]$n_raters)), 
+                      .combine = rbind.data.frame) %do% {
+                        # subset data for each number of raters
+                        dat <- 
+                          pairs_cities[[i]] %>%
+                          filter(n_raters == sort(unique(pairs_cities[[i]]$n_raters))[j])
+                        # output a vector with number of raters, subjects, and each value
+                        out <- 
+                          c(
+                            # city
+                            cities[i], 
+                            # number of raters
+                            unique(pairs_cities[[i]]$n_raters)[j], 
+                            # number of pairs
+                            agree(dat %>% select(2:(2+sort(unique(pairs_cities[[i]]$n_raters))[j] - 1)))$subjects,
+                            # % agreement
+                            agree(dat %>% select(2:(2+sort(unique(pairs_cities[[i]]$n_raters))[j] - 1)))$value,
+                            # Intraclass correlation
+                            icc(dat %>% select(2:(2+sort(unique(pairs_cities[[i]]$n_raters))[j] - 1)), 
+                                model = "twoway")$value,
+                            # krippendorf's alpha
+                            kripp.alpha(
+                              t(as.matrix(dat %>% select(2:(2+sort(unique(pairs_cities[[i]]$n_raters))[j] - 1)))), 
+                              "ordinal")$value
+                          )
+                        out <- as.data.frame(t(as.data.frame(out))) 
+                        names(out) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+                        return(out)
+                        rm(out)
+                      }
+           }
+table5_1 <- table5_1 %>% mutate_at(-c(1:2), as.numeric) # convert columns to numeric
+table5_1 <- table5_1 %>% filter(n > 2) # remove if too few comparisons n <= 2
 
-#Boston----
-#Only two raters in Boston
-agree(bos[(bos$n_raters==2), c(2:3)]) # For those with only 2 raters, calculate agreement between their ratings
-icc(bos[(bos$n_raters==2), c(2:3)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3)])), "ordinal")
+# add overall pct agreement (weighted) for each city
+table5_1 <- 
+  bind_rows(
+    table5_1, # merge with original table
+    table5_1 %>% 
+      group_by(city) %>% 
+      # calculate overall pct agreement (Weighted for each city)
+      summarise(
+        overall_n = sum(n),
+        overall_pct_agree = weighted.mean(pct_agree, n)
+      ) %>% 
+      # add columns for merge
+      mutate(n_raters = "overall", icc = NA, kripp_alpha = NA) %>%
+      # modify column names for merge
+      rename(
+        n = overall_n, 
+        pct_agree = overall_pct_agree
+      )
+  )
 
-#Detroit----
-#Two raters
-agree(det[(det$n_raters==2), c(2:3)]) 
-icc(det[(det$n_raters==2), c(2:3)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3)])), "ordinal")
-
-#Three raters
-agree(det[(det$n_raters==3), c(2:4)]) 
-icc(det[(det$n_raters==3), c(2:4)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(det[(det$n_raters==2), c(2:3)])$value * agree(det[(det$n_raters==2), c(2:3)])$subjects) + 
-    (agree(det[(det$n_raters==3), c(2:4)])$value * agree(det[(det$n_raters==3), c(2:4)])$subjects))/
-  (agree(det[(det$n_raters==2), c(2:3)])$subjects + agree(det[(det$n_raters==3), c(2:4)])$subjects)
-
-#LA----
-agree(la[(la$n_raters==2), c(2:3)]) 
-icc(la[(la$n_raters==2), c(2:3)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3)])), "ordinal")
-
-#Three raters
-agree(la[(la$n_raters==3), c(2:4)]) 
-icc(la[(la$n_raters==3), c(2:4)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(la[(la$n_raters==2), c(2:3)])$value * agree(la[(la$n_raters==2), c(2:3)])$subjects) + 
-  (agree(la[(la$n_raters==3), c(2:4)])$value * agree(la[(la$n_raters==3), c(2:4)])$subjects))/
-  (agree(la[(la$n_raters==2), c(2:3)])$subjects + agree(la[(la$n_raters==3), c(2:4)])$subjects)
-
-rm(bos,det,la) #Clean up environment
 ```
 
-### Table 5 : Pair Comparisons Reliability Panel 1
+### Table 5 : Pair Comparisons Reliability Panel 2
 
 ```{r pairwise-reliability-betweenratersandmturk}
 
-# Data----
-#Look only at those that all agree in coding sessions
-#Create separate dataframes for each city:
-bos <- pairs %>% 
-  dplyr::select(city,starts_with("pairs_cs_choice"),starts_with("pairs_mturk_choice")) %>% # Keep Mturk and coding sessions pair comparison results
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(starts_with("pairs_cs_choice"))))) %>% # Calculate the number of raters from the coding sessions
-  mutate(var = var(c_across(starts_with("pairs_cs_choice")), na.rm = TRUE)) %>% # Calculate variance across the pairwise coding session results
-  filter(var==0 | (is.na(var) & !is.na(pairs_cs_choice1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
-  filter(city=="Boston")
+# Create list with separate dataframes for each city among coding sessions with consensus
+pairs_cities <- 
+  foreach (i = 1:length(cities)) %do% {
+    pairs %>% 
+      filter(city %in% cities[i]) %>% # subset to each each city
+      select(city, which(grepl("pairs_cs_choice", names(pairs))), 
+             which(grepl("pairs_mturk_choice", names(pairs)))) %>% #subset to coding session and mturk ratings
+      filter_at(vars(pairs_cs_choice1:pairs_cs_choice4), any_vars(!is.na(.))) %>% # remove if no ratings
+      rowwise() %>%
+      mutate(n_raters = sum(!is.na(c_across(where(is.numeric)))) - 1, # number of student raters per pair
+             var = var(c_across(starts_with("pairs_cs_choice")), na.rm = TRUE)) %>%  # calculate variance across pairs to see consensus
+      filter(var==0 | (is.na(var) & !is.na(pairs_cs_choice1))) #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+  }
+names(pairs_cities) <- cities
 
-det <- pairs %>% 
-  dplyr::select(city,starts_with("pairs_cs_choice"),starts_with("pairs_mturk_choice")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(starts_with("pairs_cs_choice"))))) %>% 
-  mutate(var = var(c_across(starts_with("pairs_cs_choice")), na.rm = TRUE)) %>% 
-  filter(var==0 | (is.na(var) & !is.na(pairs_cs_choice1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
-  filter(city=="Detroit")
+# for each city, calculate % agreement, intraclass correlation, and krippendorf's alpha  
+table5_2 <- 
+  foreach (
+    i = 1:length(pairs_cities),
+    .combine = rbind.data.frame) %do% {
+      foreach (
+        j = 1:length(unique(pairs_cities[[i]]$n_raters)), 
+        .combine = rbind.data.frame) %do% {
+          # subset data for each number of raters
+          dat <- 
+            pairs_cities[[i]] %>%
+            filter(n_raters == sort(unique(pairs_cities[[i]]$n_raters))[j])
+          # create output 
+          out <- 
+            c(
+              # city
+              cities[i], 
+              # number of raters
+              sort(unique(pairs_cities[[i]]$n_raters))[j], 
+              # number of pairs
+              agree(dat %>% select(c(2:(2+sort(unique(pairs_cities[[i]]$n_raters))[j] - 1), 6)))$subjects,
+              # % agreement
+              agree(dat %>% select(c(2:(2+sort(unique(pairs_cities[[i]]$n_raters))[j] - 1), 6)))$value,
+              # Intraclass correlation
+              icc(dat %>% select(c(2:(2+sort(unique(pairs_cities[[i]]$n_raters))[j] - 1), 6)), 
+                  model = "twoway")$value,
+              # krippendorf's alpha
+              kripp.alpha(
+                t(as.matrix(
+                  dat %>% select(c(2:(2+sort(unique(pairs_cities[[i]]$n_raters))[j] - 1), 6)))), 
+                "ordinal")$value)
+          out <- as.data.frame(t(as.data.frame(out))) 
+          names(out) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+          return(out)
+          rm(out)
+        }
+    }
+table5_2 <- table5_2 %>% mutate_at(-c(1:2), as.numeric) # convert columns to numeric
+table5_2 <- table5_2 %>% filter(n > 3) # remove if too few comparisons n > 3
 
-la <- pairs %>% 
-  dplyr::select(city,starts_with("pairs_cs_choice"),starts_with("pairs_mturk_choice")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(starts_with("pairs_cs_choice"))))) %>% 
-  mutate(var = var(c_across(starts_with("pairs_cs_choice")), na.rm = TRUE)) %>% 
-  filter(var==0 | (is.na(var) & !is.na(pairs_cs_choice1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
-  filter(city=="LA")
-
-# Boston----
-#One Rater
-agree(bos[(bos$n_raters==1), c(2,6)]) 
-icc(bos[(bos$n_raters==1), c(2,6)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==1), c(2,6)])), "ordinal")
-
-#Two Raters
-agree(bos[(bos$n_raters==2), c(2:3,6)]) 
-icc(bos[(bos$n_raters==2), c(2:3,6)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3,6)])), "ordinal")
-#Overall - calculated weighted average of agreement
-((agree(bos[(bos$n_raters==1), c(2,6)])$value * agree(bos[(bos$n_raters==1), c(2,6)])$subjects) + 
-  (agree(bos[(bos$n_raters==2), c(2:3,6)])$value * agree(bos[(bos$n_raters==2), c(2:3,6)])$subjects))/
-  (agree(bos[(bos$n_raters==1), c(2,6)])$subjects + agree(bos[(bos$n_raters==2), c(2:3,6)])$subjects)
-
-#Detroit----
-#One Rater
-agree(det[(det$n_raters==1), c(2,6)]) 
-icc(det[(det$n_raters==1), c(2,6)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==1), c(2,6)])), "ordinal")
-
-#Two Raters
-agree(det[(det$n_raters==2), c(2:3,6)]) 
-icc(det[(det$n_raters==2), c(2:3,6)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3,6)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(det[(det$n_raters==1), c(2,6)])$value * agree(det[(det$n_raters==1), c(2,6)])$subjects) + 
-  (agree(det[(det$n_raters==2), c(2:3,6)])$value * agree(det[(det$n_raters==2), c(2:3,6)])$subjects))/
-  (agree(det[(det$n_raters==1), c(2,6)])$subjects + agree(det[(det$n_raters==2), c(2:3,6)])$subjects)
-
-#LA----
-#One Rater
-agree(la[(la$n_raters==1), c(2,6)]) 
-icc(la[(la$n_raters==1), c(2,6)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==1), c(2,6)])), "ordinal")
-
-#Two Raters
-agree(la[(la$n_raters==2), c(2:3,6)]) 
-icc(la[(la$n_raters==2), c(2:3,6)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3,6)])), "ordinal")
-
-#Three Raters
-agree(la[(la$n_raters==3), c(2:4,6)]) 
-icc(la[(la$n_raters==3), c(2:4,6)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4,6)])), "ordinal")
-
-#Overall - calculated weighted average of agreement:
-#Multiply each agree value by the number of subjects in that category and divide by total
-
-((agree(la[(la$n_raters==1), c(2,6)])$value * agree(la[(la$n_raters==1), c(2,6)])$subjects) + 
-  (agree(la[(la$n_raters==2), c(2:3,6)])$value * agree(la[(la$n_raters==2), c(2:3,6)])$subjects) +
-  agree(la[(la$n_raters==3), c(2:4,6)])$value * agree(la[(la$n_raters==3), c(2:4,6)])$subjects
-  )/
-  (agree(la[(la$n_raters==1), c(2,6)])$subjects + agree(la[(la$n_raters==2), c(2:3,6)])$subjects
-   + agree(la[(la$n_raters==3), c(2:4,6)])$subjects)
+# add overall pct agreement (weighted) for each city
+table5_2 <- 
+  bind_rows(
+    table5_2, # merge with original table
+    table5_2 %>% 
+      group_by(city) %>% 
+      # calculate overall pct agreement (Weighted for each city)
+      summarise(
+        overall_n = sum(n),
+        overall_pct_agree = weighted.mean(pct_agree, n)
+      ) %>% 
+      # add columns for merge
+      mutate(n_raters = "overall", icc = NA, kripp_alpha = NA) %>%
+      # modify column names for merge
+      rename(
+        n = overall_n, 
+        pct_agree = overall_pct_agree
+      )
+  )
 
 ```
 
 ## Table 6 : Single Image Reliability Panel 1
 ```{r single-reliability-betweenraters, warning=FALSE}
 
-# Data----
-#Create dataframe where at least one single image rating exists
-single_image_cs <- single_image %>% 
-  filter_at(vars(starts_with("single_cs_rating")),any_vars(!is.na(.)))
+# Create list with separate dataframes for each city 
+ratings_cities <- 
+  foreach (
+    i = 1:length(cities)) %do% {
+      single_image %>% 
+        filter(city %in% cities[i]) %>% # subset to each each city
+        select(city, which(grepl("single_cs_rating", names(single_image)))) %>% #subset to coding session ratings
+        filter_at(vars(single_cs_rating1:single_cs_rating7), any_vars(!is.na(.))) %>% # remove if no ratings
+        rowwise() %>%
+        mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% # number of raters per image
+        filter(n_raters > 1) %>% # only keep images rated by 2+ people
+        mutate(n_raters = ifelse(n_raters > 4, 4, n_raters)) # a few images have more than 4 raters, just analyze first 4 ratings
+    }
+names(ratings_cities) <- cities
 
-#Create separate dataframes for each city
-bos <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters)) %>% # Grouping raters that are 4+ together
-  filter(n_raters > 1 & city=="Boston") 
+# for each city, calculate % agreement, intraclass correlation, and krippendorf's alpha  
+table6_1 <- 
+  foreach (
+    i = 1:length(ratings_cities),
+    .combine = rbind.data.frame) %do% {
+      foreach (
+        j = 1:length(unique(ratings_cities[[i]]$n_raters)), 
+        .combine = rbind.data.frame) %do% {
+          # subset data for each number of raters
+          dat <- 
+            ratings_cities[[i]] %>%
+            filter(n_raters == sort(unique(ratings_cities[[i]]$n_raters))[j])
+          # output a vector with number of raters, images, and each value
+          out <- 
+            c(# city
+              cities[i], 
+              # number of raters
+              sort(unique(ratings_cities[[i]]$n_raters))[j], 
+              # number of images
+              agree(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1)))$subjects,
+              # % agreement
+              agree(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1)))$value,
+              # Intraclass correlation
+              icc(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1)), 
+                  model = "twoway")$value,
+              # krippendorf's alpha
+              kripp.alpha(
+                t(as.matrix(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1)))), 
+                "ordinal")$value)
+          out <- as.data.frame(t(as.data.frame(out))) 
+          names(out) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+          return(out)
+          rm(out)
+        }
+    }
+colnames(table6_1) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+table6_1 <- table6_1 %>% mutate_at(-c(1:2), as.numeric) # convert columns to numeric
+table6_1 <- table6_1 %>% filter(n > 3) # remove if too few comparisons >3
 
-det <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters)) %>% # Grouping raters that are 4+ together
-  filter(n_raters > 1 & city=="Detroit")
-
-la <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters)) %>% # Grouping raters that are 4+ together
-  filter(n_raters > 1 & city=="LA")
-
-#Boston----
-#Two Raters
-agree(bos[(bos$n_raters==2), c(2:3)]) 
-icc(bos[(bos$n_raters==2), c(2:3)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3)])), "ordinal")
-
-#Three Raters
-agree(bos[(bos$n_raters==3), c(2:4)]) 
-icc(bos[(bos$n_raters==3), c(2:4)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==3), c(2:4)])), "ordinal")
-
-#Four Raters
-agree(bos[(bos$n_raters==4), c(2:5)]) 
-icc(bos[(bos$n_raters==4), c(2:5)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==4), c(2:5)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(bos[(bos$n_raters==2), c(2:3)])$value * agree(bos[(bos$n_raters==2), c(2:3)])$subjects) +
-  agree(bos[(bos$n_raters==3), c(2:4)])$value * agree(bos[(bos$n_raters==3), c(2:4)])$subjects +
-  agree(bos[(bos$n_raters==4), c(2:5)])$value * agree(bos[(bos$n_raters==4), c(2:5)])$subjects 
-  )/
-  (agree(bos[(bos$n_raters==2), c(2:3)])$subjects
-   + agree(bos[(bos$n_raters==3), c(2:4)])$subjects +
-     agree(bos[(bos$n_raters==4), c(2:5)])$subjects 
-   )
-
-#Detroit----
-#Two raters
-agree(det[(det$n_raters==2), c(2:3)]) 
-icc(det[(det$n_raters==2), c(2:3)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3)])), "ordinal")
-
-#Three raters
-agree(det[(det$n_raters==3), c(2:4)]) 
-icc(det[(det$n_raters==3), c(2:4)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4)])), "ordinal")
-
-#Four Raters
-agree(det[(det$n_raters==4), c(2:5)]) 
-icc(det[(det$n_raters==4), c(2:5)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==4), c(2:5)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(det[(det$n_raters==2), c(2:3)])$value * agree(det[(det$n_raters==2), c(2:3)])$subjects) +
-  agree(det[(det$n_raters==3), c(2:4)])$value * agree(det[(det$n_raters==3), c(2:4)])$subjects +
-  agree(det[(det$n_raters==4), c(2:5)])$value * agree(det[(det$n_raters==4), c(2:5)])$subjects 
-  )/
-  (agree(det[(det$n_raters==2), c(2:3)])$subjects
-   + agree(det[(det$n_raters==3), c(2:4)])$subjects +
-     agree(det[(det$n_raters==4), c(2:5)])$subjects 
-   )
-
-#LA----
-agree(la[(la$n_raters==2), c(2:3)]) 
-icc(la[(la$n_raters==2), c(2:3)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3)])), "ordinal")
-
-#Three raters
-agree(la[(la$n_raters==3), c(2:4)]) 
-icc(la[(la$n_raters==3), c(2:4)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4)])), "ordinal")
-
-#Four raters
-agree(la[(la$n_raters==4), c(2:5)]) 
-icc(la[(la$n_raters==4), c(2:5)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==4), c(2:5)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(la[(la$n_raters==2), c(2:3)])$value * agree(la[(la$n_raters==2), c(2:3)])$subjects) +
-  agree(la[(la$n_raters==3), c(2:4)])$value * agree(la[(la$n_raters==3), c(2:4)])$subjects +
-  agree(la[(la$n_raters==4), c(2:5)])$value * agree(la[(la$n_raters==4), c(2:5)])$subjects 
-)/
-  (agree(la[(la$n_raters==2), c(2:3)])$subjects
-   + agree(la[(la$n_raters==3), c(2:4)])$subjects +
-     agree(la[(la$n_raters==4), c(2:5)])$subjects 
+# add overall pct agreement (weighted) for each city
+table6_1 <- 
+  bind_rows(
+    table6_1, # merge with original table
+    table6_1 %>% 
+      group_by(city) %>% 
+      # calculate overall pct agreement (Weighted for each city)
+      summarise(
+        overall_n = sum(n),
+        overall_pct_agree = weighted.mean(pct_agree, n)
+      ) %>% 
+      # add columns for merge
+      mutate(n_raters = "overall", icc = NA, kripp_alpha = NA) %>%
+      # modify column names for merge
+      rename(
+        n = overall_n, 
+        pct_agree = overall_pct_agree
+      )
   )
-
-rm(bos,det,la) #Clean up environment
 ```
 
 ### Table 6: Single Image Reliability Panel 2
 
 ```{r single-reliability-betweenratersandmturk}
-#Look only at those that all agree in coding sessions
+# Create list with separate dataframes for each city among coding sessions with consensus
+ratings_cities <- 
+  foreach (
+    i = 1:length(cities)) %do% {
+      single_image %>% 
+        filter(city %in% cities[i]) %>% # subset to each each city
+        select(city, which(grepl("single_cs_rating", names(single_image))), 
+               trueskill_rating) %>% #subset to coding session ratings and trueskill ratings
+        filter_at(vars(single_cs_rating1:single_cs_rating7), any_vars(!is.na(.))) %>% # remove if no ratings
+        rowwise() %>%
+        mutate(n_raters = sum(!is.na(c_across(where(is.numeric)))) - 1, # number of raters per image
+               var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>%  # calculate variance across pairs to see consensus) 
+        filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>%  #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+        filter(n_raters > 1) %>% # only keep images rated by 2+ people
+        mutate(n_raters = ifelse(n_raters > 4, 4, n_raters)) # a few images have more than 4 raters, just analyze first 4 ratings
+    }
+names(ratings_cities) <- cities
 
-# Create separate dataframes for each city:
-bos <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating"),trueskill_rating) %>% 
-  filter(!is.na(trueskill_rating)) %>% # Keep only those with Trueskill rating
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
-  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
-  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
-  filter(city=="Boston") 
+# for each city, calculate % agreement, intraclass correlation, and krippendorf's alpha  
+table6_2 <- 
+  foreach (
+    i = 1:length(ratings_cities),
+    .combine = rbind.data.frame) %do% {
+      foreach (
+        j = 1:length(unique(ratings_cities[[i]]$n_raters)), 
+        .combine = rbind.data.frame) %do% {
+          # subset data for each number of raters
+          dat <- 
+            ratings_cities[[i]] %>%
+            filter(n_raters == sort(unique(ratings_cities[[i]]$n_raters))[j])
+          # output a vector with number of raters, images, and each value
+          out <- 
+            c(# city
+              cities[i], 
+              # number of raters
+              sort(unique(ratings_cities[[i]]$n_raters))[j], 
+              # number of images
+              agree(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1), 9))$subjects,
+              # % agreement
+              agree(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1), 9))$value,
+              # Intraclass correlation
+              icc(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1), 9), 
+                  model = "twoway")$value,
+              # krippendorf's alpha
+              kripp.alpha(
+                t(as.matrix(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1), 9))), 
+                "ordinal")$value)
+          out <- as.data.frame(t(as.data.frame(out))) 
+          names(out) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+          return(out)
+          rm(out)
+        }
+    }
+colnames(table6_2) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+table6_2 <- table6_2 %>% mutate_at(-c(1:2), as.numeric) # convert columns to numeric
+table6_2 <- table6_2 %>% filter(n > 3) # remove if too few comparisons >3
 
-det <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating"),trueskill_rating) %>% 
-  filter(!is.na(trueskill_rating)) %>% # Keep only those with Trueskill rating 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
-  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
-  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
-  filter(city=="Detroit") %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
-
-la <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating"),trueskill_rating) %>% 
-  filter(!is.na(trueskill_rating)) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
-  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
-  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
-  filter(city=="LA") %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters))  # If more than 4 raters, keep with 4 raters
-
-# Boston----
-#Two raters
-agree(bos[(bos$n_raters==2), c(2:3,9)]) 
-icc(bos[(bos$n_raters==2), c(2:3,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3,9)])), "ordinal")
-
-#Three raters
-agree(bos[(bos$n_raters==3), c(2:4,9)]) 
-icc(bos[(bos$n_raters==3), c(2:4,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==3), c(2:4,9)])), "ordinal")
-
-#Four raters
-agree(bos[(bos$n_raters==4), c(2:5,9)]) 
-icc(bos[(bos$n_raters==4), c(2:5,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==4), c(2:5,9)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(bos[(bos$n_raters==2), c(2:3,9)])$value * agree(bos[(bos$n_raters==2), c(2:3,9)])$subjects) +
-  agree(bos[(bos$n_raters==3), c(2:4,9)])$value * agree(bos[(bos$n_raters==3), c(2:4,9)])$subjects +
-  agree(bos[(bos$n_raters==4), c(2:5,9)])$value * agree(bos[(bos$n_raters==4), c(2:5,9)])$subjects 
-  )/
-  (agree(bos[(bos$n_raters==2), c(2:3,9)])$subjects
-   + agree(bos[(bos$n_raters==3), c(2:4,9)])$subjects +
-     agree(bos[(bos$n_raters==4), c(2:5,9)])$subjects 
-   )
-
-
-#Detroit----
-#Two raters
-agree(det[(det$n_raters==2), c(2:3,9)]) 
-icc(det[(det$n_raters==2), c(2:3,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3,9)])), "ordinal")
-
-#Three raters
-agree(det[(det$n_raters==3), c(2:4,9)]) 
-icc(det[(det$n_raters==3), c(2:4,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4,9)])), "ordinal")
-
-#Four raters
-agree(det[(det$n_raters==4), c(2:5,9)]) 
-icc(det[(det$n_raters==4), c(2:5,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==4), c(2:5,9)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(det[(det$n_raters==2), c(2:3,9)])$value * agree(det[(det$n_raters==2), c(2:3,9)])$subjects) +
-  agree(det[(det$n_raters==3), c(2:4,9)])$value * agree(det[(det$n_raters==3), c(2:4,9)])$subjects +
-  agree(det[(det$n_raters==4), c(2:5,9)])$value * agree(det[(det$n_raters==4), c(2:5,9)])$subjects 
-)/
-  (agree(det[(det$n_raters==2), c(2:3,9)])$subjects
-   + agree(det[(det$n_raters==3), c(2:4,9)])$subjects +
-     agree(det[(det$n_raters==4), c(2:5,9)])$subjects 
-  )
-
-#LA----
-#Two raters
-agree(la[(la$n_raters==2), c(2:3,9)]) 
-icc(la[(la$n_raters==2), c(2:3,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3,9)])), "ordinal")
-
-#Three raters
-agree(la[(la$n_raters==3), c(2:4,9)]) 
-icc(la[(la$n_raters==3), c(2:4,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4,9)])), "ordinal")
-
-#Four raters
-agree(la[(la$n_raters==4), c(2:5,9)]) 
-icc(la[(la$n_raters==4), c(2:5,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==4), c(2:5,9)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(la[(la$n_raters==2), c(2:3,9)])$value * agree(la[(la$n_raters==2), c(2:3,9)])$subjects) +
-  agree(la[(la$n_raters==3), c(2:4,9)])$value * agree(la[(la$n_raters==3), c(2:4,9)])$subjects +
-  agree(la[(la$n_raters==4), c(2:5,9)])$value * agree(la[(la$n_raters==4), c(2:5,9)])$subjects 
-)/
-  (agree(la[(la$n_raters==2), c(2:3,9)])$subjects
-   + agree(la[(la$n_raters==3), c(2:4,9)])$subjects +
-     agree(la[(la$n_raters==4), c(2:5,9)])$subjects 
+# add overall pct agreement (weighted) for each city
+table6_2 <- 
+  bind_rows(
+    table6_2, # merge with original table
+    table6_2 %>% 
+      group_by(city) %>% 
+      # calculate overall pct agreement (Weighted for each city)
+      summarise(
+        overall_n = sum(n),
+        overall_pct_agree = weighted.mean(pct_agree, n)
+      ) %>% 
+      # add columns for merge
+      mutate(n_raters = "overall", icc = NA, kripp_alpha = NA) %>%
+      # modify column names for merge
+      rename(
+        n = overall_n, 
+        pct_agree = overall_pct_agree
+      )
   )
 ```
 
 ## Table 7 : Reliability Between Raters and Predictions Panel 1
 ```{r single-reliability-betweenraters}
 
-#Create dataframe where at least one single image rating exists and create binary version of rating
-single_image_cs <- single_image %>% 
-  filter_at(vars(starts_with("single_cs_rating")),any_vars(!is.na(.))) %>% # Keep only those that have at least one coding session rating
-  mutate(across(starts_with("single_cs_rating"), # Make coding session results binary
-                ~ case_when(
-                    . %in% c(1) ~ 0, # If a coder rated something as no trash - similar to prediction of 0
-                    . %in% c(2,3,4) ~ 1, # Any level of trash - similar to prediction of 1
-                    TRUE ~ NA_real_ # Otherwise (rater marked as too obstructed) - this should be NA
-                  )
-               ))
+# Create list with separate dataframes for each city with at least 2 ratings 
+ratings_cities <- 
+  foreach (
+    i = 1:length(cities)) %do% {
+      single_image %>% 
+        filter(city %in% cities[i]) %>% # subset to each each city
+        select(city, which(grepl("single_cs_rating", names(single_image)))) %>% #subset to coding session ratings
+        filter_at(vars(single_cs_rating1:single_cs_rating4), any_vars(!is.na(.))) %>% # remove if no ratings
+        rowwise() %>%
+        mutate_at(
+          vars(starts_with("single_cs_rating")), # convert ratings to binary version
+          funs(case_when(
+            . %in% c(0,1) ~ 0, # (0, 1) = obstructed or no trash
+            . %in% c(2,3,4) ~ 1 # (2, 3, 4) = little, some, or a lot of trash
+          ))) %>% 
+        mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% # number of raters per image
+        filter(n_raters > 1) %>% # only keep images rated by 2+ people
+        mutate(n_raters = ifelse(n_raters > 4, 4, n_raters)) # a few images have more than 4 raters, just analyze first 4 ratings
+    }
+names(ratings_cities) <- cities
 
+# for each city, calculate % agreement, intraclass correlation, and krippendorf's alpha  
+table7_1 <- 
+  foreach (
+    i = 1:length(ratings_cities),
+    .combine = rbind.data.frame) %do% {
+      foreach (
+        j = 1:length(unique(ratings_cities[[i]]$n_raters)), 
+        .combine = rbind.data.frame) %do% {
+          # subset data for each number of raters
+          dat <- 
+            ratings_cities[[i]] %>%
+            filter(n_raters == sort(unique(ratings_cities[[i]]$n_raters))[j])
+          # output a vector with number of raters, images, and each value
+          out <- 
+            c(# city
+              cities[i], 
+              # number of raters
+              sort(unique(ratings_cities[[i]]$n_raters))[j], 
+              # number of images
+              agree(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1)))$subjects,
+              # % agreement
+              agree(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1)))$value,
+              # Intraclass correlation
+              icc(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1)), 
+                  model = "twoway")$value,
+              # krippendorf's alpha
+              kripp.alpha(
+                t(as.matrix(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1)))), 
+                "ordinal")$value)
+          out <- as.data.frame(t(as.data.frame(out))) 
+          names(out) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+          return(out)
+          rm(out)
+        }
+    }
+colnames(table7_1) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+table7_1 <- table7_1 %>% mutate_at(-c(1:2), as.numeric) # convert columns to numeric
+table7_1 <- table7_1 %>% filter(n > 3) # remove if too few comparisons >3
 
-#Create separate dataframes for each city
-bos <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
-  filter(n_raters > 1 & city=="Boston") %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters)) 
-
-det <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
-  filter(n_raters > 1 & city=="Detroit") %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters)) 
-
-la <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating")) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(where(is.numeric))))) %>% 
-  filter(n_raters > 1 & city=="LA") %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
-
-#Boston----
-#Two Raters
-agree(bos[(bos$n_raters==2), c(2:3)]) 
-icc(bos[(bos$n_raters==2), c(2:3)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3)])), "ordinal")
-
-#Three Raters
-agree(bos[(bos$n_raters==3), c(2:4)]) 
-icc(bos[(bos$n_raters==3), c(2:4)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==3), c(2:4)])), "ordinal")
-
-#Four Raters
-agree(bos[(bos$n_raters==4), c(2:5)]) 
-icc(bos[(bos$n_raters==4), c(2:5)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==4), c(2:5)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(bos[(bos$n_raters==2), c(2:3)])$value * agree(bos[(bos$n_raters==2), c(2:3)])$subjects) +
-  agree(bos[(bos$n_raters==3), c(2:4)])$value * agree(bos[(bos$n_raters==3), c(2:4)])$subjects +
-  agree(bos[(bos$n_raters==4), c(2:5)])$value * agree(bos[(bos$n_raters==4), c(2:5)])$subjects 
-  )/
-  (agree(bos[(bos$n_raters==2), c(2:3)])$subjects
-   + agree(bos[(bos$n_raters==3), c(2:4)])$subjects +
-     agree(bos[(bos$n_raters==4), c(2:5)])$subjects 
-   )
-
-#Detroit----
-#Two raters
-agree(det[(det$n_raters==2), c(2:3)]) 
-icc(det[(det$n_raters==2), c(2:3)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3)])), "ordinal")
-
-#Three raters
-agree(det[(det$n_raters==3), c(2:4)]) 
-icc(det[(det$n_raters==3), c(2:4)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4)])), "ordinal")
-
-#Four Raters
-agree(det[(det$n_raters==4), c(2:5)]) 
-icc(det[(det$n_raters==4), c(2:5)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==4), c(2:5)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(det[(det$n_raters==2), c(2:3)])$value * agree(det[(det$n_raters==2), c(2:3)])$subjects) +
-  agree(det[(det$n_raters==3), c(2:4)])$value * agree(det[(det$n_raters==3), c(2:4)])$subjects +
-  agree(det[(det$n_raters==4), c(2:5)])$value * agree(det[(det$n_raters==4), c(2:5)])$subjects 
-  )/
-  (agree(det[(det$n_raters==2), c(2:3)])$subjects
-   + agree(det[(det$n_raters==3), c(2:4)])$subjects +
-     agree(det[(det$n_raters==4), c(2:5)])$subjects 
-   )
-
-#LA----
-#Two raters
-agree(la[(la$n_raters==2), c(2:3)]) 
-icc(la[(la$n_raters==2), c(2:3)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3)])), "ordinal")
-
-#Three raters
-agree(la[(la$n_raters==3), c(2:4)]) 
-icc(la[(la$n_raters==3), c(2:4)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4)])), "ordinal")
-
-#Four raters
-agree(la[(la$n_raters==4), c(2:5)]) 
-icc(la[(la$n_raters==4), c(2:5)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==4), c(2:5)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(la[(la$n_raters==2), c(2:3)])$value * agree(la[(la$n_raters==2), c(2:3)])$subjects) +
-  agree(la[(la$n_raters==3), c(2:4)])$value * agree(la[(la$n_raters==3), c(2:4)])$subjects +
-  agree(la[(la$n_raters==4), c(2:5)])$value * agree(la[(la$n_raters==4), c(2:5)])$subjects 
-)/
-  (agree(la[(la$n_raters==2), c(2:3)])$subjects
-   + agree(la[(la$n_raters==3), c(2:4)])$subjects +
-     agree(la[(la$n_raters==4), c(2:5)])$subjects 
+# add overall pct agreement (weighted) for each city
+table7_1 <- 
+  bind_rows(
+    table7_1, # merge with original table
+    table7_1 %>% 
+      group_by(city) %>% 
+      # calculate overall pct agreement (Weighted for each city)
+      summarise(
+        overall_n = sum(n),
+        overall_pct_agree = weighted.mean(pct_agree, n)
+      ) %>% 
+      # add columns for merge
+      mutate(n_raters = "overall", icc = NA, kripp_alpha = NA) %>%
+      # modify column names for merge
+      rename(
+        n = overall_n, 
+        pct_agree = overall_pct_agree
+      )
   )
-
-
-rm(bos,det,la) #Clean up environment
 ```
 
 ### Table 7: Reliability Between Raters and Predictions Panel 2
 
 ```{r single-reliability-betweenratersandmturk}
-# Data----
-#Look only at those that all agree in coding sessions
+# Create list with separate dataframes for each city among coding sessions with consensus
+ratings_cities <- 
+  foreach (
+    i = 1:length(cities)) %do% {
+      single_image %>% 
+        filter(city %in% cities[i] & # subset to each each city
+                 !is.na(pred_svm)) %>% # remove if missing ML prediction
+        select(city, which(grepl("single_cs_rating", names(single_image))), 
+               pred_svm) %>% #subset to coding session ratings and ML predictions
+        filter_at(vars(single_cs_rating1:single_cs_rating7), any_vars(!is.na(.))) %>% # remove if no ratings
+        rowwise() %>%
+        mutate_at(
+          vars(starts_with("single_cs_rating")), # convert ratings to binary version
+          funs(case_when(
+            . %in% c(0,1) ~ 0, # (0, 1) = obstructed or no trash
+            . %in% c(2,3,4) ~ 1 # (2, 3, 4) = little, some, or a lot of trash
+          ))) %>% 
+        mutate(n_raters = sum(!is.na(c_across(where(is.numeric)))) - 1, # number of raters per image
+               var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>%  # calculate variance across pairs to see consensus) 
+        filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
+        filter(n_raters > 1) %>% # only keep images rated by 2+ people
+        mutate(n_raters = ifelse(n_raters > 4, 4, n_raters)) # a few images have more than 4 raters, just analyze first 4 ratings
+    }
+names(ratings_cities) <- cities
 
-bos <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating"),pred_svm) %>% 
-  filter(!is.na(pred_svm)) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
-  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
-  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
-  filter(city=="Boston") %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
+# for each city, calculate % agreement, intraclass correlation, and krippendorf's alpha  
+table7_2 <- 
+  foreach (
+    i = 1:length(ratings_cities),
+    .combine = rbind.data.frame) %do% {
+      foreach (
+        j = 1:length(unique(ratings_cities[[i]]$n_raters)), 
+        .combine = rbind.data.frame) %do% {
+          # subset data for each number of raters
+          dat <- 
+            ratings_cities[[i]] %>%
+            filter(n_raters == sort(unique(ratings_cities[[i]]$n_raters))[j])
+          # output a vector with number of raters, images, and each value
+          out <- 
+            c(# city
+              cities[i], 
+              # number of raters
+              sort(unique(ratings_cities[[i]]$n_raters))[j], 
+              # number of images
+              agree(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1), 9))$subjects,
+              # % agreement
+              agree(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1), 9))$value,
+              # Intraclass correlation
+              icc(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1), 9), 
+                  model = "twoway")$value,
+              # krippendorf's alpha
+              kripp.alpha(
+                t(as.matrix(dat %>% select(2:(2+sort(unique(ratings_cities[[i]]$n_raters))[j] - 1), 9))), 
+                "ordinal")$value)
+          out <- as.data.frame(t(as.data.frame(out))) 
+          names(out) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+          return(out)
+          rm(out)
+        }
+    }
+colnames(table7_2) <- c("city", "n_raters", "n", "pct_agree", "icc", "kripp_alpha")
+table7_2 <- table7_2 %>% mutate_at(-c(1:2), as.numeric) # convert columns to numeric
+table7_2 <- table7_2 %>% filter(n > 3) # remove if too few comparisons >3
 
-det <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating"),pred_svm) %>% 
-  filter(!is.na(pred_svm)) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
-  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
-  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
-  filter(city=="Detroit") %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters)) 
-
-la <- single_image_cs %>% 
-  dplyr::select(city,starts_with("single_cs_rating"),pred_svm) %>% 
-  filter(!is.na(pred_svm)) %>% 
-  rowwise() %>% 
-  mutate(n_raters = sum(!is.na(c_across(starts_with("single_cs_rating"))))) %>% 
-  mutate(var = var(c_across(starts_with("single_cs_rating")), na.rm = TRUE)) %>% 
-  filter(var==0 | (is.na(var) & !is.na(single_cs_rating1))) %>% #Keep those with no variance (i.e. equal) or NA variance (i.e. one rater)
-  filter(city=="LA") %>% 
-  mutate(n_raters = ifelse(n_raters>4,4,n_raters))
-
-# Boston----
-#Two raters
-agree(bos[(bos$n_raters==2), c(2:3,9)]) 
-icc(bos[(bos$n_raters==2), c(2:3,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==2), c(2:3,9)])), "ordinal")
-
-#Three raters
-agree(bos[(bos$n_raters==3), c(2:4,9)]) 
-icc(bos[(bos$n_raters==3), c(2:4,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==3), c(2:4,9)])), "ordinal")
-
-#Four raters
-agree(bos[(bos$n_raters==4), c(2:5,9)]) 
-icc(bos[(bos$n_raters==4), c(2:5,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(bos[(bos$n_raters==4), c(2:5,9)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(bos[(bos$n_raters==2), c(2:3,9)])$value * agree(bos[(bos$n_raters==2), c(2:3,9)])$subjects) +
-  agree(bos[(bos$n_raters==3), c(2:4,9)])$value * agree(bos[(bos$n_raters==3), c(2:4,9)])$subjects +
-  agree(bos[(bos$n_raters==4), c(2:5,9)])$value * agree(bos[(bos$n_raters==4), c(2:5,9)])$subjects 
-  )/
-  (agree(bos[(bos$n_raters==2), c(2:3,9)])$subjects
-   + agree(bos[(bos$n_raters==3), c(2:4,9)])$subjects +
-     agree(bos[(bos$n_raters==4), c(2:5,9)])$subjects 
-   )
-
-
-# Detroit----
-#Two raters
-agree(det[(det$n_raters==2), c(2:3,9)]) 
-icc(det[(det$n_raters==2), c(2:3,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==2), c(2:3,9)])), "ordinal")
-
-#Three raters
-agree(det[(det$n_raters==3), c(2:4,9)]) 
-icc(det[(det$n_raters==3), c(2:4,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==3), c(2:4,9)])), "ordinal")
-
-#Four raters
-agree(det[(det$n_raters==4), c(2:5,9)]) 
-icc(det[(det$n_raters==4), c(2:5,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(det[(det$n_raters==4), c(2:5,9)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(det[(det$n_raters==2), c(2:3,9)])$value * agree(det[(det$n_raters==2), c(2:3,9)])$subjects) +
-  agree(det[(det$n_raters==3), c(2:4,9)])$value * agree(det[(det$n_raters==3), c(2:4,9)])$subjects +
-  agree(det[(det$n_raters==4), c(2:5,9)])$value * agree(det[(det$n_raters==4), c(2:5,9)])$subjects 
-)/
-  (agree(det[(det$n_raters==2), c(2:3,9)])$subjects
-   + agree(det[(det$n_raters==3), c(2:4,9)])$subjects +
-     agree(det[(det$n_raters==4), c(2:5,9)])$subjects 
-  )
-
-#LA----
-
-#Two raters
-agree(la[(la$n_raters==2), c(2:3,9)]) 
-icc(la[(la$n_raters==2), c(2:3,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==2), c(2:3,9)])), "ordinal")
-
-#Three raters
-agree(la[(la$n_raters==3), c(2:4,9)]) 
-icc(la[(la$n_raters==3), c(2:4,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==3), c(2:4,9)])), "ordinal")
-
-#Four raters
-agree(la[(la$n_raters==4), c(2:5,9)]) 
-icc(la[(la$n_raters==4), c(2:5,9)], model = "twoway") 
-kripp.alpha(t(as.matrix(la[(la$n_raters==4), c(2:5,9)])), "ordinal")
-
-#Overall - calculated weighted average of agreement
-((agree(la[(la$n_raters==2), c(2:3,9)])$value * agree(la[(la$n_raters==2), c(2:3,9)])$subjects) +
-  agree(la[(la$n_raters==3), c(2:4,9)])$value * agree(la[(la$n_raters==3), c(2:4,9)])$subjects +
-  agree(la[(la$n_raters==4), c(2:5,9)])$value * agree(la[(la$n_raters==4), c(2:5,9)])$subjects 
-)/
-  (agree(la[(la$n_raters==2), c(2:3,9)])$subjects
-   + agree(la[(la$n_raters==3), c(2:4,9)])$subjects +
-     agree(la[(la$n_raters==4), c(2:5,9)])$subjects 
+# add overall pct agreement (weighted) for each city
+table7_2 <- 
+  bind_rows(
+    table7_2, # merge with original table
+    table7_2 %>% 
+      group_by(city) %>% 
+      # calculate overall pct agreement (Weighted for each city)
+      summarise(
+        overall_n = sum(n),
+        overall_pct_agree = weighted.mean(pct_agree, n)
+      ) %>% 
+      # add columns for merge
+      mutate(n_raters = "overall", icc = NA, kripp_alpha = NA) %>%
+      # modify column names for merge
+      rename(
+        n = overall_n, 
+        pct_agree = overall_pct_agree
+      )
   )
 ```
 
