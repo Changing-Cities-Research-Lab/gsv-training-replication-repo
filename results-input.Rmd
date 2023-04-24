@@ -668,6 +668,7 @@ ggplot(agg_overall, aes(x=rating, y=perc,fill=type)) +
   scale_y_continuous(labels = scales::percent) + 
   coord_cartesian(ylim=c(0,0.80)) + 
   labs(title = "All Cities", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme_classic() +
   theme(plot.title = element_text(hjust = 0.5)) +
   scale_fill_manual(values = c("gray40", "gray70"))
 
@@ -681,6 +682,7 @@ agg_bos_plot <-
   scale_y_continuous(labels = scales::percent) + 
   coord_cartesian(ylim=c(0,0.80)) + 
   labs(title = "Boston", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme_classic() +
   theme(plot.title = element_text(hjust = 0.5)) +
   scale_fill_manual(values = c("gray40", "gray70"))
 
@@ -694,6 +696,7 @@ agg_det_plot <-
   scale_y_continuous(labels = scales::percent) + 
   coord_cartesian(ylim=c(0,0.80)) + 
   labs(title = "Detroit", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme_classic() +
   theme(plot.title = element_text(hjust = 0.5)) +
   scale_fill_manual(values = c("gray40", "gray70"))
 
@@ -707,6 +710,7 @@ agg_la_plot <-
   scale_y_continuous(labels = scales::percent) + 
   coord_cartesian(ylim=c(0,0.80)) + 
   labs(title = "Los Angeles", y = "Percent", x="Rating", fill = "Rating Source") +
+  theme_classic() +
   theme(plot.title = element_text(hjust = 0.5)) +
   scale_fill_manual(values = c("gray40", "gray70"))
 
